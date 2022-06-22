@@ -48,7 +48,7 @@ async def root():
     # urls.append(url)
     # create response object
     for url in urls:
-        files.append({'stream': s3_content_generator(url), 'name': url.split('/')[-1]})
+        files.append({'stream': ena_content_generator(url), 'name': url.split('/')[-1]})
     # download started
     # zip_inf = zipstream.ZipInfo(file_name)
     # z.write(data)
@@ -64,32 +64,32 @@ async def root():
     # response['Content-Disposition'] = 'attachment; filename={}'.format('files.zip')
     return response
 
-
-def s3_content_generator(url):
+def ena_content_generator(url):
     # s3_bucket - your s3 bucket name
     with httpx.stream('GET', url) as r:
         yield from r.iter_bytes()
 
 
 @app.post("/files/assemblies")
-def download(taxonomyFilter: str = Form()):
+def download(taxonomyFilter: str = Form(), filter: Optional[str] = Form()):
     taxonomyFilter1 = json.loads(taxonomyFilter)
-    print(taxonomyFilter)
-    print(len(taxonomyFilter1))
-    print(taxonomyFilter1[0])
+
+    if filter:
+        taxnomyList = filter.split("-")
+
     files = []
     query_param = ' { "'"from"'" : 0, "'"size"'" : 5000, "'"query"'" : { "'"bool"'" : { "'"must"'" : [ '
     if taxonomyFilter:
         for index, taxonomy in enumerate(taxonomyFilter1):
-            print(taxonomy.get('rank'))
+
             if len(taxonomyFilter1) == 1:
-                query_param = query_param + '"nested" : { "path" : "taxonomies", "query" : { "nested" : { ' \
+                query_param = query_param + ' { "nested" : { "path" : "taxonomies", "query" : { "nested" : { ' \
                                             '"path" : ' \
                                             '"taxonomies.' + taxonomy.get(
                     'rank') + '"' ', "query" : { "bool" : { "must" : [{ ' \
                               '"term" : { ' \
                               '"taxonomies.' + taxonomy.get('rank') + '.scientificName":''"' + taxonomy.get(
-                    'taxonomy') + '"' '}}]}}}}} '
+                    'taxonomy') + '"' '}}]}}}}} } '
             elif (len(taxonomyFilter1) - 1) == index:
                 query_param = query_param + '{ "nested" : { "path" : "taxonomies", "query" : { "nested" : { ' \
                                             '"path" : ' \
@@ -106,6 +106,15 @@ def download(taxonomyFilter: str = Form()):
                               '"term" : { ' \
                               '"taxonomies.' + taxonomy.get('rank') + '.scientificName" :''"' + taxonomy.get(
                     'taxonomy') + '"' '}}]}}}}}}, '
+
+        if taxnomyList and taxnomyList[0].strip() in taxaRankArray:
+            query_param = query_param + ',{ "nested" : { "path" : "taxonomies", "query" : { "nested" : { ' \
+                                        '"path" : ' \
+                                        '"taxonomies.' + taxnomyList[0].strip() + '"' ', "query" : { "bool" : { ' \
+                                                                                  '"must" : [{ ' \
+                                                                                  '"term" : { ' \
+                                                                                  '"taxonomies.' + taxnomyList[
+                              0].strip() + '.tax_id" :''"' + taxnomyList[1].strip() + '"' '}}]}}}}}} '
 
         query_param = query_param + '] }}}'
         print(query_param)
@@ -122,7 +131,7 @@ def download(taxonomyFilter: str = Form()):
                                                                                                          "=true "
                     print(url)
                     files.append(
-                        {'stream': s3_content_generator(url), 'name': assemblies.get("accession") + '.fasta.gz'})
+                        {'stream': ena_content_generator(url), 'name': assemblies.get("accession") + '.fasta.gz'})
 
         zf = ZipStream(files, chunksize=32768)
 
@@ -133,24 +142,22 @@ def download(taxonomyFilter: str = Form()):
 
 
 @app.post("/files/annotations")
-def download(taxonomyFilter: str = Form()):
+def download(taxonomyFilter: str = Form(), filter: Optional[str] = Form()):
     taxonomyFilter1 = json.loads(taxonomyFilter)
-    print(taxonomyFilter)
-    print(len(taxonomyFilter1))
-    print(taxonomyFilter1[0])
+    if filter:
+        taxnomyList = filter.split("-")
     files = []
     query_param = ' { "'"from"'" : 0, "'"size"'" : 5000, "'"query"'" : { "'"bool"'" : { "'"must"'" : [ '
     if taxonomyFilter:
         for index, taxonomy in enumerate(taxonomyFilter1):
-            print(taxonomy.get('rank'))
             if len(taxonomyFilter1) == 1:
-                query_param = query_param + '"nested" : { "path" : "taxonomies", "query" : { "nested" : { ' \
+                query_param = query_param + ' { "nested" : { "path" : "taxonomies", "query" : { "nested" : { ' \
                                             '"path" : ' \
                                             '"taxonomies.' + taxonomy.get(
                     'rank') + '"' ', "query" : { "bool" : { "must" : [{ ' \
                               '"term" : { ' \
                               '"taxonomies.' + taxonomy.get('rank') + '.scientificName":''"' + taxonomy.get(
-                    'taxonomy') + '"' '}}]}}}}} '
+                    'taxonomy') + '"' '}}]}}}}} }'
             elif (len(taxonomyFilter1) - 1) == index:
                 query_param = query_param + '{ "nested" : { "path" : "taxonomies", "query" : { "nested" : { ' \
                                             '"path" : ' \
@@ -168,14 +175,18 @@ def download(taxonomyFilter: str = Form()):
                               '"taxonomies.' + taxonomy.get('rank') + '.scientificName" :''"' + taxonomy.get(
                     'taxonomy') + '"' '}}]}}}}}}, '
 
+        if taxnomyList and taxnomyList[0].strip() in taxaRankArray:
+            query_param = query_param + ',{ "nested" : { "path" : "taxonomies", "query" : { "nested" : { ' \
+                                        '"path" : ' \
+                                        '"taxonomies.' + taxnomyList[0].strip() + '"' ', "query" : { "bool" : { ' \
+                                                                                  '"must" : [{ ' \
+                                                                                  '"term" : { ' \
+                                                                                  '"taxonomies.' + taxnomyList[
+                              0].strip() + '.tax_id" :''"' + taxnomyList[1].strip() + '"' '}}]}}}}}} '
         query_param = query_param + '] }}}'
-        x = 0
         print(query_param)
         data_portal = es.search(index="data_portal", size=10000, body=query_param)
-        names = list()
         for organism in data_portal['hits']['hits']:
-            print(organism['_id'])
-            # print(organism.get('_source').get("assemblies"))
             if organism.get('_source').get("annotation"):
                 print(len(organism.get('_source').get("annotation")))
                 print(organism.get('_source').get("annotation")[0].get("annotation"))
@@ -186,11 +197,9 @@ def download(taxonomyFilter: str = Form()):
                                                                                                             "=true "
                     print(url)
                     files.append(
-                        {'stream': s3_content_generator(url), 'name': annotationObj.get("accession") + '.fasta.gz'})
+                        {'stream': ena_content_generator(url), 'name': annotationObj.get("accession") + '.fasta.gz'})
 
-            print('---------------------------------------------')
         zf = ZipStream(files, chunksize=32768)
-
         response = StreamingResponse(zf.stream(), media_type='application/zip')
         return response
     else:
