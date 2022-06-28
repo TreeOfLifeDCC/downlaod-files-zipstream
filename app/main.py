@@ -1,21 +1,25 @@
-import io
 import json
-
+from typing import Optional
+import zipstream
 import httpx
 from fastapi import FastAPI, Form
 from fastapi.responses import StreamingResponse
-
-from zipstream import ZipStream
 from fastapi.middleware.cors import CORSMiddleware
 from elasticsearch import RequestsHttpConnection
 from elasticsearch import Elasticsearch
 
 app = FastAPI()
-es = Elasticsearch("ttp://elasticsearch.default:9200",
+es = Elasticsearch("http://elasticsearch.default:9200",
                    connection_class=RequestsHttpConnection,
                    use_ssl=False, verify_certs=False)
 
 origins = ["*"]
+taxaRankArray = ['superkingdom', 'kingdom', 'subkingdom', 'superphylum', 'phylum', 'subphylum', 'superclass', 'class',
+                 'subclass', 'infraclass', 'cohort', 'subcohort', 'superorder', 'order', 'suborder', 'infraorder',
+                 'parvorder', 'section', 'subsection', 'superfamily', 'family', 'subfamily', 'tribe', 'subtribe',
+                 'genus', 'series', 'subgenus', 'species_group', 'species_subgroup', 'species', 'subspecies',
+                 'varietas',
+                 'forma']
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,47 +30,8 @@ app.add_middleware(
 )
 
 
-@app.get("/download")
-async def root():
-    zip_buffer = io.BytesIO()
-    files = []
-    urls = ['https://www.ebi.ac.uk/ena/browser/api/fasta/GCA_939531405?download=true&gzip=true',
-            'https://www.ebi.ac.uk/ena/browser/api/fasta/GCA_927399515?download=true&gzip=true']
-    # with zipstream.ZipFile(zip_buffer,"w", zipfile.ZIP_DEFLATED, False) as zf:
-    file_name = 'GCA_939531405'
-    # url = "https://www.ebi.ac.uk/ena/browser/api/fasta/GCA_939531405?download=true&gzip=true"
-    # print(url)
-
-    # print("Downloading file:%s" % file_name)
-    # r = requests.get(url, stream=True)
-    # data = b''
-    # # for chunk in r.iter_content(chunk_size=1024):
-    # if r.status_code == '<Response [200]>':
-    # for chunk in r.content(1024):
-    # z.write(g)
-    # zf.write_iter(get_source_bytes_iter(url))
-    # urls.append(url)
-    # create response object
-    for url in urls:
-        files.append({'stream': ena_content_generator(url), 'name': url.split('/')[-1]})
-    # download started
-    # zip_inf = zipstream.ZipInfo(file_name)
-    # z.write(data)
-    # def iterfile():  #
-    #     with open(some_file_path, mode="rb") as file_like:  #
-    #         yield from file_like  #
-
-    zip_buffer.seek(0)
-    # z.seek(0)
-    zf = ZipStream(files, chunksize=32768)
-
-    response = StreamingResponse(zf.stream(), media_type='application/zip')
-    # response['Content-Disposition'] = 'attachment; filename={}'.format('files.zip')
-    return response
-
 def ena_content_generator(url):
-    # s3_bucket - your s3 bucket name
-    with httpx.stream('GET', url) as r:
+    with httpx.stream('GET', url, timeout=None) as r:
         yield from r.iter_bytes()
 
 
@@ -77,7 +42,6 @@ def download(taxonomyFilter: str = Form(), filter: Optional[str] = Form()):
     if filter:
         taxnomyList = filter.split("-")
 
-    files = []
     query_param = ' { "'"from"'" : 0, "'"size"'" : 5000, "'"query"'" : { "'"bool"'" : { "'"must"'" : [ '
     if taxonomyFilter:
         for index, taxonomy in enumerate(taxonomyFilter1):
@@ -119,23 +83,25 @@ def download(taxonomyFilter: str = Form(), filter: Optional[str] = Form()):
         query_param = query_param + '] }}}'
         print(query_param)
         data_portal = es.search(index="data_portal", size=10000, body=query_param)
+        z = zipstream.ZipFile(allowZip64=True)
         for organism in data_portal['hits']['hits']:
             print(organism['_id'])
             # print(organism.get('_source').get("assemblies"))
             if organism.get('_source').get("assemblies"):
                 print(len(organism.get('_source').get("assemblies")))
                 for assemblies in organism.get('_source').get("assemblies"):
-                    print(assemblies.get("accession"))
+                    print(assemblies)
                     url = "https://www.ebi.ac.uk/ena/browser/api/fasta/" + assemblies.get("accession") + "?download" \
                                                                                                          "=true&gzip" \
                                                                                                          "=true "
                     print(url)
-                    files.append(
-                        {'stream': ena_content_generator(url), 'name': assemblies.get("accession") + '.fasta.gz'})
+                    z.write_iter(assemblies.get("accession") + '.' + assemblies.get("version") + '.fasta.gz', ena_content_generator(url))
 
-        zf = ZipStream(files, chunksize=32768)
+        def generator():
+            for chunk in z:
+                yield chunk
 
-        response = StreamingResponse(zf.stream(), media_type='application/zip')
+        response = StreamingResponse(generator(), media_type='application/zip')
         return response
     else:
         return {"Please Provide a Valid input fields"}
@@ -146,7 +112,7 @@ def download(taxonomyFilter: str = Form(), filter: Optional[str] = Form()):
     taxonomyFilter1 = json.loads(taxonomyFilter)
     if filter:
         taxnomyList = filter.split("-")
-    files = []
+
     query_param = ' { "'"from"'" : 0, "'"size"'" : 5000, "'"query"'" : { "'"bool"'" : { "'"must"'" : [ '
     if taxonomyFilter:
         for index, taxonomy in enumerate(taxonomyFilter1):
@@ -186,21 +152,35 @@ def download(taxonomyFilter: str = Form(), filter: Optional[str] = Form()):
         query_param = query_param + '] }}}'
         print(query_param)
         data_portal = es.search(index="data_portal", size=10000, body=query_param)
+        z = zipstream.ZipFile(allowZip64=True)
         for organism in data_portal['hits']['hits']:
             if organism.get('_source').get("annotation"):
                 print(len(organism.get('_source').get("annotation")))
                 print(organism.get('_source').get("annotation")[0].get("annotation"))
                 for annotationObj in organism.get('_source').get("annotation"):
                     print(annotationObj.get("accession"))
-                    url = "https://www.ebi.ac.uk/ena/browser/api/fasta/" + annotationObj.get("accession") + "?download" \
-                                                                                                            "=true&gzip" \
-                                                                                                            "=true "
-                    print(url)
-                    files.append(
-                        {'stream': ena_content_generator(url), 'name': annotationObj.get("accession") + '.fasta.gz'})
+                    if annotationObj.get('annotation'):
+                        urlGFT = annotationObj.get('annotation').get('GTF')
+                        z.write_iter('GFT/' + urlGFT.split('/')[-1], ena_content_generator(urlGFT))
+                        urlGFF3 = annotationObj.get('annotation').get('GFF3')
+                        z.write_iter('GFF3/' + urlGFF3.split('/')[-1], ena_content_generator(urlGFF3))
+                    if annotationObj.get('proteins'):
+                        url_proteins = annotationObj.get('proteins').get('FASTA')
+                        z.write_iter('proteins/' + url_proteins.split('/')[-1], ena_content_generator(url_proteins))
+                    if annotationObj.get('softmasked_genome'):
+                        url_softmasked_genome = annotationObj.get('softmasked_genome').get('FASTA')
+                        z.write_iter('softmaskedGenome/' + url_softmasked_genome.split('/')[-1],
+                                     ena_content_generator(url_softmasked_genome))
+                    if annotationObj.get('transcripts'):
+                        url_transcripts = annotationObj.get('transcripts').get('FASTA')
+                        z.write_iter('transcripts/' + url_transcripts.split('/')[-1],
+                                     ena_content_generator(url_transcripts))
 
-        zf = ZipStream(files, chunksize=32768)
-        response = StreamingResponse(zf.stream(), media_type='application/zip')
+        def generator():
+            for chunk in z:
+                yield chunk
+
+        response = StreamingResponse(generator(), media_type='application/zip')
         return response
     else:
         return {"Please Provide a Valid input fields"}
