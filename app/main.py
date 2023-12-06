@@ -122,8 +122,11 @@ def download(taxonomyFilter: str = Form(), filter: Optional[str] = Form()):
                                                                                                          "=true&gzip" \
                                                                                                          "=true "
                     print(url)
-                    z.write_iter(assemblies.get("accession") + '.' + assemblies.get("version") + '.fasta.gz',
-                                 ena_content_generator(url))
+                    if assemblies.get("version"):
+                        z.write_iter(assemblies.get("accession") + '.' + assemblies.get("version") + '.fasta.gz',
+                                     ena_content_generator(url))
+                    else:
+                        z.write_iter(assemblies.get("accession") + '.fasta.gz', ena_content_generator(url))
                 # z.write_iter('GCA_905147045.1.fasta.gz',
                 #                  ena_content_generator("https://www.ebi.ac.uk/ena/browser/api/embl/GCA_905147045.1?download=true&gzip=true"))
 
